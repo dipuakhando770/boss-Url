@@ -15,7 +15,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "cf-typegen": "wrangler types",
-    "deploy": "wrangler deploy",
+    "deploy": "npm run build:frontend && wrangler deploy",
     "d1:migrate:local": "wrangler d1 migrations apply boss-url-db --local",
     "d1:migrate:remote": "wrangler d1 migrations apply boss-url-db --remote"
   },
