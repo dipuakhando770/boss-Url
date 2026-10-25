@@ -166,8 +166,125 @@ describe('Authentication & Registration System', () => {
     expect(res.status).toBe(500);
 
     const body = await res.json<{ error: string; errorCode: string; banglaMessage: string }>();
-    expect(body.errorCode).toBe('SERVER_ERROR');
+    expect(body.errorCode).toBe('DATABASE_ERROR');
     expect(body.error).not.toContain('D1_INTERNAL_LOCK_ERROR'); // Sanitized
     expect(body.banglaMessage).toBeDefined();
+  });
+
+  describe('First-Time Administrator Setup (Bootstrap)', () => {
+    it('rejects bootstrap if BOOTSTRAP_SECRET is unconfigured on server', async () => {
+      const db = createMockDb();
+      const req = new Request('http://localhost/api/auth/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bootstrap_secret: 'some-secret',
+          email: 'admin@nasirdigitalhub.com',
+          password: 'BossAdminPassword@2026',
+        }),
+      });
+
+      const res = await handleAuthRoutes(req, new URL(req.url), db, {}); // No secret provided
+      expect(res.status).toBe(500);
+      const data = await res.json<{ errorCode: string }>();
+      expect(data.errorCode).toBe('BOOTSTRAP_SECRET_NOT_CONFIGURED');
+    });
+
+    it('rejects bootstrap if provided secret does not match configured secret', async () => {
+      const db = createMockDb();
+      const req = new Request('http://localhost/api/auth/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bootstrap_secret: 'wrong-secret',
+          email: 'admin@nasirdigitalhub.com',
+          password: 'BossAdminPassword@2026',
+        }),
+      });
+
+      const res = await handleAuthRoutes(req, new URL(req.url), db, { BOOTSTRAP_SECRET: 'real-cf-secret-xyz' });
+      expect(res.status).toBe(403);
+      const data = await res.json<{ errorCode: string }>();
+      expect(data.errorCode).toBe('INVALID_BOOTSTRAP_SECRET');
+    });
+
+    it('successfully bootstraps first administrator with valid secret', async () => {
+      const db = createMockDb();
+      const secret = 'prod-cf-bootstrap-secret-999';
+      const req = new Request('http://localhost/api/auth/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bootstrap_secret: secret,
+          email: 'superadmin@nasirdigitalhub.com',
+          password: 'SuperAdminPassword@2026',
+          name: 'Super Admin',
+        }),
+      });
+
+      const res = await handleAuthRoutes(req, new URL(req.url), db, { BOOTSTRAP_SECRET: secret });
+      expect(res.status).toBe(201);
+      const data = await res.json<{ success: boolean; email: string; role: string }>();
+      expect(data.success).toBe(true);
+      expect(data.email).toBe('superadmin@nasirdigitalhub.com');
+      expect(data.role).toBe('admin');
+
+      // Verify user in DB has admin role
+      const adminUser = await db.getUserByEmail('superadmin@nasirdigitalhub.com');
+      expect(adminUser).not.toBeNull();
+      expect(adminUser?.role).toBe('admin');
+    });
+
+    it('prevents reusing bootstrap once an administrator already exists', async () => {
+      const db = createMockDb();
+      const secret = 'prod-cf-bootstrap-secret-999';
+
+      // First admin creation
+      const req1 = new Request('http://localhost/api/auth/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bootstrap_secret: secret,
+          email: 'admin1@nasirdigitalhub.com',
+          password: 'AdminPassword1@2026',
+        }),
+      });
+      const res1 = await handleAuthRoutes(req1, new URL(req1.url), db, { BOOTSTRAP_SECRET: secret });
+      expect(res1.status).toBe(201);
+
+      // Attempt second admin creation
+      const req2 = new Request('http://localhost/api/auth/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bootstrap_secret: secret,
+          email: 'admin2@nasirdigitalhub.com',
+          password: 'AdminPassword2@2026',
+        }),
+      });
+      const res2 = await handleAuthRoutes(req2, new URL(req2.url), db, { BOOTSTRAP_SECRET: secret });
+      expect(res2.status).toBe(403);
+      const data2 = await res2.json<{ errorCode: string }>();
+      expect(data2.errorCode).toBe('ADMIN_ALREADY_EXISTS');
+    });
+
+    it('rejects weak password for administrator bootstrap', async () => {
+      const db = createMockDb();
+      const secret = 'prod-cf-bootstrap-secret-999';
+      const req = new Request('http://localhost/api/auth/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bootstrap_secret: secret,
+          email: 'admin@nasirdigitalhub.com',
+          password: 'short', // less than 8 chars
+        }),
+      });
+
+      const res = await handleAuthRoutes(req, new URL(req.url), db, { BOOTSTRAP_SECRET: secret });
+      expect(res.status).toBe(400);
+      const data = await res.json<{ errorCode: string }>();
+      expect(data.errorCode).toBe('WEAK_PASSWORD');
+    });
   });
 });

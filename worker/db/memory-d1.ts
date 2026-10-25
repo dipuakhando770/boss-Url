@@ -199,6 +199,13 @@ class MemoryPreparedStatement implements D1PreparedStatement {
 
     // Counts
     if (q.includes('SELECT COUNT(*) as count') || q.includes('SELECT COUNT(*) as c')) {
+      if (q.includes("FROM users WHERE role = 'admin'")) {
+        let adminCount = 0;
+        for (const u of this.memDb.users.values()) {
+          if (u.role === 'admin') adminCount++;
+        }
+        return { count: adminCount, c: adminCount } as unknown as T;
+      }
       if (q.includes('FROM users')) return { count: this.memDb.users.size, c: this.memDb.users.size } as unknown as T;
       if (q.includes('FROM links')) return { count: this.memDb.links.size, c: this.memDb.links.size } as unknown as T;
       if (q.includes('FROM clicks')) return { count: this.memDb.clicks.length, c: this.memDb.clicks.length } as unknown as T;
