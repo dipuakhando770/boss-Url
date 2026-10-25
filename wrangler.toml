@@ -22,6 +22,6 @@ migrations_dir = "migrations"
 [vars]
 APP_NAME = "Boss URL Shortener SaaS"
 STAGE1_DOMAIN = "https://urlshort.nasirdigitalhub.com"
-STAGE2_API_URL = "http://107.174.37.180/api/links/stage1"
+STAGE2_API_URL = "https://boss-url.vercel.app/api/proxy/stage2"
 ADMIN_PATH = "/nachid/admin"
 ENVIRONMENT = "production"

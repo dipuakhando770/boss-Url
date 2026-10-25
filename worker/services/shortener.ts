@@ -161,33 +161,61 @@ export async function processTwoStageShortening(
   let stage2ResponseData: Stage2ApiResponse | null = null;
   let vpsErrorDetail = '';
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
+  const callVpsEndpoint = async (targetEndpoint: string): Promise<{ data: Stage2ApiResponse | null; error: string }> => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-    const vpsReq = await fetch(stage2ApiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Boss-URL-Shortener/1.0',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify({ url: stage1Url }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
+      const res = await fetch(targetEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Boss-URL-Shortener/1.0',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({ url: stage1Url }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
 
-    if (!vpsReq.ok) {
-      const errText = await vpsReq.text();
-      vpsErrorDetail = `VPS API HTTP ${vpsReq.status}: ${errText.substring(0, 200)}`;
-    } else {
-      stage2ResponseData = await vpsReq.json<Stage2ApiResponse>();
+      if (!res.ok) {
+        const errText = await res.text();
+        return { data: null, error: `VPS API HTTP ${res.status}: ${errText.substring(0, 200)}` };
+      }
+      const data = await res.json<Stage2ApiResponse>();
+      return { data, error: '' };
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return { data: null, error: 'VPS API request timed out after 10000ms' };
+      }
+      return { data: null, error: err instanceof Error ? err.message : 'Network connection to VPS failed' };
     }
-  } catch (fetchErr: unknown) {
-    if (fetchErr instanceof Error && fetchErr.name === 'AbortError') {
-      vpsErrorDetail = 'VPS API request timed out after 10000ms';
-    } else {
-      vpsErrorDetail = fetchErr instanceof Error ? fetchErr.message : 'Network connection to VPS failed';
+  };
+
+  // Attempt primary configured endpoint
+  const primaryResult = await callVpsEndpoint(stage2ApiUrl);
+  if (primaryResult.data && !primaryResult.data.error && primaryResult.data.stage1_url) {
+    stage2ResponseData = primaryResult.data;
+  } else {
+    vpsErrorDetail = primaryResult.error;
+
+    // Detect Cloudflare Error 1003 (Direct IP access not allowed) or raw IP connection failures
+    const isError1003 = vpsErrorDetail.includes('1003') || vpsErrorDetail.includes('Direct IP');
+    const isDirectIp = /https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(stage2ApiUrl);
+
+    // If direct IP was blocked by Cloudflare Edge with Error 1003, fallback to secure HTTPS gateway
+    if (isError1003 || (isDirectIp && !stage2ResponseData)) {
+      const fallbackGatewayUrl = 'https://boss-url.vercel.app/api/proxy/stage2';
+      if (stage2ApiUrl !== fallbackGatewayUrl) {
+        console.warn(`Cloudflare Direct IP restricted (${vpsErrorDetail}). Falling back to HTTPS gateway: ${fallbackGatewayUrl}`);
+        const fallbackResult = await callVpsEndpoint(fallbackGatewayUrl);
+        if (fallbackResult.data && !fallbackResult.data.error && fallbackResult.data.stage1_url) {
+          stage2ResponseData = fallbackResult.data;
+          vpsErrorDetail = '';
+        } else if (fallbackResult.error) {
+          vpsErrorDetail += ` | Gateway fallback error: ${fallbackResult.error}`;
+        }
+      }
     }
   }
 

@@ -152,4 +152,66 @@ describe('Two-Stage URL Shortening Pipeline Service', () => {
 
     global.fetch = originalFetch;
   });
+
+  it('detects Cloudflare Error 1003 (Direct IP access not allowed) and recovers via HTTPS gateway', async () => {
+    const mockDb: any = {
+      getApprovedDomains: vi.fn().mockResolvedValue(['nasirdigitalhub.com']),
+      getUserActiveSubscription: vi.fn().mockResolvedValue(dummySub),
+      getLinkByStage1Code: vi.fn().mockResolvedValue(null),
+      createStage1Link: vi.fn().mockResolvedValue(undefined),
+      updateStage2Completed: vi.fn().mockResolvedValue(undefined),
+      incrementSubscriptionUsage: vi.fn().mockResolvedValue(undefined),
+      getLinkById: vi.fn().mockResolvedValue({
+        id: 'lnk_recovered_123',
+        stage1_code: 'recovered',
+        stage1_url: 'https://urlshort.nasirdigitalhub.com/recovered',
+        final_url: 'http://107.174.37.180/s1_recovered',
+        status: 'completed',
+      }),
+    };
+
+    const originalFetch = global.fetch;
+    // First call (direct IP) fails with Cloudflare Error 1003
+    // Second call (HTTPS gateway) succeeds with valid VPS response
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        text: async () => 'error code: 1003 Direct IP access not allowed',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          error: false,
+          success: true,
+          mode: 'local',
+          stage1_id: 99,
+          stage1_code: 's1_recovered',
+          stage1_url: 'http://107.174.37.180/s1_recovered',
+          original_url: 'https://urlshort.nasirdigitalhub.com/recovered',
+        }),
+      });
+
+    global.fetch = fetchMock;
+
+    const res = await processTwoStageShortening(mockDb, {
+      originalUrl: 'https://nasirdigitalhub.com/recovery-test',
+      customCode: 'recovered',
+      user: dummyUser,
+      stage1Domain: 'https://urlshort.nasirdigitalhub.com',
+      stage2ApiUrl: 'http://107.174.37.180/api/links/stage1', // raw IP triggering 1003
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(res.success).toBe(true);
+    expect(res.finalUrl).toBe('http://107.174.37.180/s1_recovered');
+    expect(mockDb.updateStage2Completed).toHaveBeenCalledWith(
+      expect.any(String),
+      's1_recovered',
+      99,
+      'http://107.174.37.180/s1_recovered'
+    );
+
+    global.fetch = originalFetch;
+  });
 });

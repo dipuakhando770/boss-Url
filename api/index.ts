@@ -92,6 +92,31 @@ export default async function handler(request: Request): Promise<Response> {
       return res;
     }
 
+    // 5. VPS Stage 2 HTTPS Gateway Proxy (resolves Cloudflare Worker Error 1003 Direct IP restriction)
+    if (url.pathname === '/api/proxy/stage2') {
+      if (request.method === 'POST') {
+        const payload = await request.text();
+        const vpsRes = await fetch('http://107.174.37.180/api/links/stage1', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': 'Boss-URL-Shortener/1.0',
+          },
+          body: payload,
+        });
+        const vpsData = await vpsRes.text();
+        return new Response(vpsData, {
+          status: vpsRes.status,
+          headers: {
+            'Content-Type': 'application/json',
+            ...Object.fromEntries(corsHeaders.entries()),
+          },
+        });
+      }
+      return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+    }
+
     return new Response(JSON.stringify({ error: 'Endpoint not found', success: false }), {
       status: 404,
       headers: {
