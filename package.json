@@ -16,8 +16,9 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit",
     "cf-typegen": "wrangler types",
     "deploy": "npm run build:frontend && wrangler deploy",
-    "d1:migrate:local": "wrangler d1 migrations apply boss-url-db --local",
-    "d1:migrate:remote": "wrangler d1 migrations apply boss-url-db --remote"
+    "d1:migrate:local": "wrangler d1 migrations apply boss-url-db-prod --local",
+    "d1:migrate:remote": "wrangler d1 migrations apply boss-url-db-prod --remote",
+    "d1:apply:remote": "wrangler d1 execute boss-url-db-prod --remote --file=./migrations/full_schema.sql"
   },
   "dependencies": {
     "clsx": "^2.1.1",

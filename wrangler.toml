@@ -1,4 +1,4 @@
-name = "boss-url-shortener"
+name = "boss-url"
 main = "worker/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
@@ -15,8 +15,8 @@ not_found_handling = "single-page-application"
 # Cloudflare D1 Database binding
 [[d1_databases]]
 binding = "DB"
-database_name = "boss-url-db"
-database_id = "boss-url-db-prod"
+database_name = "boss-url-db-prod"
+database_id = "6599be47-9a42-47eb-8d4d-ffeff9941b8f"
 migrations_dir = "migrations"
 
 [vars]
@@ -25,5 +25,3 @@ STAGE1_DOMAIN = "https://urlshort.nasirdigitalhub.com"
 STAGE2_API_URL = "http://107.174.37.180/api/links/stage1"
 ADMIN_PATH = "/nachid/admin"
 ENVIRONMENT = "production"
-JWT_SECRET = "replace-with-secure-wrangler-secret-in-production"
-BOOTSTRAP_SECRET = "replace-with-secure-wrangler-secret-in-production"

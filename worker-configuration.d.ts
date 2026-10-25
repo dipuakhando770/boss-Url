@@ -6,8 +6,6 @@ interface Env {
 	STAGE2_API_URL: "http://107.174.37.180/api/links/stage1";
 	ADMIN_PATH: "/nachid/admin";
 	ENVIRONMENT: "production";
-	JWT_SECRET: "replace-with-secure-wrangler-secret-in-production";
-	BOOTSTRAP_SECRET: "replace-with-secure-wrangler-secret-in-production";
 	DB: D1Database;
 	ASSETS: Fetcher;
 }
