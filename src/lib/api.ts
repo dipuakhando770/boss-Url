@@ -1,6 +1,6 @@
 // Frontend Typed API Client
 
-const API_BASE = '/api';
+const API_BASE = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
 export class ApiError extends Error {
   status: number;
@@ -36,18 +36,53 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+    });
+  } catch (netErr: unknown) {
+    throw new ApiError(
+      'Unable to connect to the server. Please check your internet connection.',
+      0,
+      'NETWORK_ERROR',
+      'সার্ভারের সাথে সংযোগ স্থাপন করা সম্ভব হয়নি। ইন্টারনেট সংযোগ পরীক্ষা করুন।'
+    );
+  }
 
-  const data = await response.json().catch(() => ({}));
+  let data: any = {};
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    data = await response.json().catch(() => ({}));
+  } else {
+    const text = await response.text().catch(() => '');
+    if (response.status === 404) {
+      data = {
+        error: 'API endpoint not found (404). Please verify backend deployment.',
+        errorCode: 'ENDPOINT_NOT_FOUND',
+        banglaMessage: 'এপিআই এন্ডপয়েন্ট পাওয়া যায়নি (৪০৪)। ব্যাকএন্ড ডেপ্লয়মেন্ট যাচাই করুন।',
+      };
+    } else if (response.status >= 500) {
+      data = {
+        error: 'The server encountered an error. Please try again later.',
+        errorCode: 'SERVER_ERROR',
+        banglaMessage: 'সার্ভারে একটি ত্রুটি ঘটেছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      };
+    } else {
+      data = {
+        error: text || `Request failed with HTTP status ${response.status}`,
+        errorCode: `HTTP_${response.status}`,
+        banglaMessage: `অনুরোধটি ব্যর্থ হয়েছে (কোড: ${response.status})।`,
+      };
+    }
+  }
 
   if (!response.ok) {
     throw new ApiError(
-      data.error || 'An unexpected error occurred',
+      data.error || `Request failed with status ${response.status}`,
       response.status,
-      data.errorCode,
+      data.errorCode || `HTTP_${response.status}`,
       data.banglaMessage
     );
   }

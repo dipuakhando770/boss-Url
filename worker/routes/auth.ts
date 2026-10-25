@@ -24,63 +24,98 @@ export async function handleAuthRoutes(
   // 1. POST /api/auth/register
   if (path === '/api/auth/register' && method === 'POST') {
     try {
-      const body = await request.json<{ email?: string; password?: string; name?: string }>();
+      const body = await request.json<{ email?: string; password?: string; name?: string }>().catch(() => ({} as { email?: string; password?: string; name?: string }));
       const email = (body.email || '').trim().toLowerCase();
       const password = body.password || '';
       const name = (body.name || '').trim();
 
-      if (!email || !email.includes('@') || email.length < 5) {
-        return jsonResponse({ error: 'Valid email address is required' }, 400);
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!email || !emailRegex.test(email) || email.length < 5) {
+        return jsonResponse({
+          error: 'Valid email address is required',
+          errorCode: 'INVALID_EMAIL',
+          banglaMessage: 'অনুগ্রহ করে একটি সঠিক ইমেইল এড্রেস প্রদান করুন।',
+        }, 400);
       }
       if (!password || password.length < 6) {
-        return jsonResponse({ error: 'Password must be at least 6 characters long' }, 400);
+        return jsonResponse({
+          error: 'Password must be at least 6 characters long',
+          errorCode: 'INVALID_PASSWORD',
+          banglaMessage: 'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।',
+        }, 400);
       }
       if (!name) {
-        return jsonResponse({ error: 'Name is required' }, 400);
+        return jsonResponse({
+          error: 'Full name is required',
+          errorCode: 'INVALID_NAME',
+          banglaMessage: 'অনুগ্রহ করে আপনার পুরো নাম প্রদান করুন।',
+        }, 400);
       }
 
-      // Check existing user
+      // Check existing user for email uniqueness
       const existing = await db.getUserByEmail(email);
       if (existing) {
-        return jsonResponse({ error: 'An account with this email already exists' }, 409);
+        return jsonResponse({
+          error: 'An account with this email already exists',
+          errorCode: 'EMAIL_ALREADY_EXISTS',
+          banglaMessage: 'এই ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট তৈরি করা হয়েছে। অনুগ্রহ করে লগইন করুন।',
+        }, 409);
       }
 
       const { hash, salt } = await hashPassword(password);
       const userId = 'usr_' + generateRandomString(10);
       const now = Date.now();
 
+      // Ensure user role is always 'user' (never admin)
       const newUser: Omit<UserRecord, 'updated_at'> = {
         id: userId,
         email,
         password_hash: hash,
         salt,
         name,
-        role: 'user', // NEVER allow public registration to set admin
+        role: 'user',
         status: 'active',
         created_at: now,
       };
 
       await db.createUser(newUser);
 
-      // Auto-assign default Starter package (30 days, 50 links)
+      // Requirement 6: Ensure Free Starter Plan (30 days, 50 links quota) is reliably created
       const packages = await db.getPackages();
-      const starterPkg = packages.find(p => p.id === 'pkg_starter') || packages[0];
-      if (starterPkg) {
-        const subId = 'sub_' + generateRandomString(10);
-        const subRecord: SubscriptionRecord = {
-          id: subId,
-          user_id: userId,
-          package_id: starterPkg.id,
-          links_used: 0,
-          starts_at: now,
-          expires_at: now + starterPkg.duration_days * 86400000,
-          status: 'active',
+      let starterPkg = packages.find(p => p.id === 'pkg_starter');
+      if (!starterPkg) {
+        starterPkg = {
+          id: 'pkg_starter',
+          name: 'Starter Free',
+          duration_days: 30,
+          link_quota: 50,
+          price: 0.00,
+          is_active: 1,
           created_at: now,
         };
-        await db.createSubscription(subRecord);
+        try {
+          await db.createPackage(starterPkg);
+        } catch {
+          // If already created concurrently, retrieve again
+          const refreshed = await db.getPackages();
+          starterPkg = refreshed.find(p => p.id === 'pkg_starter') || starterPkg;
+        }
       }
 
-      // Create session
+      const subId = 'sub_' + generateRandomString(10);
+      const subRecord: SubscriptionRecord = {
+        id: subId,
+        user_id: userId,
+        package_id: starterPkg.id,
+        links_used: 0,
+        starts_at: now,
+        expires_at: now + starterPkg.duration_days * 86400000,
+        status: 'active',
+        created_at: now,
+      };
+      await db.createSubscription(subRecord);
+
+      // Create session token
       const sessionToken = generateRandomString(32);
       const session: SessionRecord = {
         id: 'ses_' + generateRandomString(12),
@@ -100,37 +135,63 @@ export async function handleAuthRoutes(
           name,
           role: 'user',
           status: 'active',
+          created_at: now,
+        },
+        subscription: {
+          ...subRecord,
+          package_name: starterPkg.name,
+          link_quota: starterPkg.link_quota,
         },
       }, 201);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Registration failed';
-      return jsonResponse({ error: msg }, 500);
+      console.error('Registration failure:', err);
+      return jsonResponse({
+        error: 'Registration failed due to a server error. Please try again.',
+        errorCode: 'SERVER_ERROR',
+        banglaMessage: 'সার্ভার ত্রুটির কারণে রেজিস্ট্রেশন সম্পন্ন করা সম্ভব হয়নি। অনুগ্রহ করে আবার চেষ্টা করুন।',
+      }, 500);
     }
   }
 
   // 2. POST /api/auth/login
   if (path === '/api/auth/login' && method === 'POST') {
     try {
-      const body = await request.json<{ email?: string; password?: string }>();
+      const body = await request.json<{ email?: string; password?: string }>().catch(() => ({} as { email?: string; password?: string }));
       const email = (body.email || '').trim().toLowerCase();
       const password = body.password || '';
 
       if (!email || !password) {
-        return jsonResponse({ error: 'Email and password are required' }, 400);
+        return jsonResponse({
+          error: 'Email and password are required',
+          errorCode: 'INVALID_CREDENTIALS',
+          banglaMessage: 'ইমেইল এবং পাসওয়ার্ড প্রদান করা আবশ্যক।',
+        }, 400);
       }
 
       const user = await db.getUserByEmail(email);
       if (!user) {
-        return jsonResponse({ error: 'Invalid email or password' }, 401);
+        return jsonResponse({
+          error: 'Invalid email or password',
+          errorCode: 'INVALID_CREDENTIALS',
+          banglaMessage: 'ভুল ইমেইল বা পাসওয়ার্ড প্রদান করা হয়েছে।',
+        }, 401);
       }
 
       if (user.status === 'suspended') {
-        return jsonResponse({ error: 'This account has been suspended. Please contact administrator.' }, 403);
+        return jsonResponse({
+          error: 'This account has been suspended. Please contact administrator.',
+          errorCode: 'ACCOUNT_SUSPENDED',
+          banglaMessage: 'আপনার অ্যাকাউন্টটি স্থগিত করা হয়েছে। অনুগ্রহ করে অ্যাডমিনের সঙ্গে যোগাযোগ করুন।',
+        }, 403);
       }
 
       const isValid = await verifyPassword(password, user.password_hash, user.salt);
       if (!isValid) {
-        return jsonResponse({ error: 'Invalid email or password' }, 401);
+        return jsonResponse({
+          error: 'Invalid email or password',
+          errorCode: 'INVALID_CREDENTIALS',
+          banglaMessage: 'ভুল ইমেইল বা পাসওয়ার্ড প্রদান করা হয়েছে।',
+        }, 401);
       }
 
       const now = Date.now();
@@ -156,8 +217,12 @@ export async function handleAuthRoutes(
         },
       });
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Login failed';
-      return jsonResponse({ error: msg }, 500);
+      console.error('Login failure:', err);
+      return jsonResponse({
+        error: 'Login failed due to a server error',
+        errorCode: 'SERVER_ERROR',
+        banglaMessage: 'লগইন ব্যর্থ হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।',
+      }, 500);
     }
   }
 

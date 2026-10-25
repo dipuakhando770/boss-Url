@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { processTwoStageShortening } from '../worker/services/shortener';
-import { UserRecord, SubscriptionRecord } from '../types';
+import { UserRecord, SubscriptionRecord } from '../worker/types';
 
 describe('Two-Stage URL Shortening Pipeline Service', () => {
   const dummyUser: UserRecord = {

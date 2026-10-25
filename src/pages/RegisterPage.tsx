@@ -16,13 +16,23 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ navigate }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [banglaAlert, setBanglaAlert] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setBanglaAlert(null);
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      setError('Please enter a valid email address.');
+      setBanglaAlert('অনুগ্রহ করে একটি সঠিক ইমেইল এড্রেস লিখুন।');
+      return;
+    }
 
     if (password.length < 6) {
       setError('Password must be at least 6 characters.');
+      setBanglaAlert('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
       return;
     }
 
@@ -32,7 +42,15 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ navigate }) => {
       await register(email.trim(), password, name.trim());
       navigate('/dashboard');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Registration failed');
+      if (err instanceof Error) {
+        setError(err.message);
+        if ('banglaMessage' in err && typeof (err as any).banglaMessage === 'string') {
+          setBanglaAlert((err as any).banglaMessage);
+        }
+      } else {
+        setError('Registration failed');
+        setBanglaAlert('রেজিস্ট্রেশন সম্পন্ন করা সম্ভব হয়নি।');
+      }
     } finally {
       setLoading(false);
     }
@@ -60,9 +78,16 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ navigate }) => {
           <form onSubmit={handleSubmit} className="space-y-4">
             
             {error && (
-              <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-300 text-xs font-medium flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{error}</span>
+              <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-300 text-xs font-medium space-y-1">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span className="font-semibold">{error}</span>
+                </div>
+                {banglaAlert && (
+                  <div className="pl-6 text-[11px] text-rose-700 dark:text-rose-400 font-normal">
+                    {banglaAlert}
+                  </div>
+                )}
               </div>
             )}
 
