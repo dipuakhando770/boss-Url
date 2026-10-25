@@ -10,6 +10,15 @@ export interface ShortenOptions {
   user: UserRecord;
   stage1Domain: string;
   stage2ApiUrl: string;
+  /**
+   * Optional HTTPS proxy gateway for runtimes that block raw-IP HTTP requests
+   * (Cloudflare Workers, Vercel Edge). When provided and the primary stage2ApiUrl
+   * fails with an IP-restriction error, the shortener retries via this gateway.
+   * Example: https://boss-url.vercel.app/api/proxy/stage2
+   * The gateway is a Vercel Node.js function that forwards to the VPS over HTTP.
+   * The final returned URL is still http://107.174.37.180/s1_... — never changed.
+   */
+  proxyGatewayUrl?: string;
 }
 
 export interface ShortenResult {
@@ -26,7 +35,7 @@ export async function processTwoStageShortening(
   db: Database,
   options: ShortenOptions
 ): Promise<ShortenResult> {
-  const { originalUrl, customCode, title, user, stage1Domain, stage2ApiUrl } = options;
+  const { originalUrl, customCode, title, user, stage1Domain, stage2ApiUrl, proxyGatewayUrl } = options;
 
   // 1. Validate destination URL and extract hostname
   let hostname: string;
@@ -192,29 +201,41 @@ export async function processTwoStageShortening(
     }
   };
 
-  // Attempt primary configured endpoint
+  // --- Stage 2 Strategy ---
+  // Primary: call the configured VPS endpoint directly (works in Node.js; blocked in CF/Edge).
+  // Fallback: if the runtime blocks direct IP access (CF Error 1003 / Vercel Edge restriction),
+  //   retry via the configured HTTPS proxy gateway (Vercel Node.js function).
+  //   The gateway forwards to the VPS and returns the exact VPS response unchanged.
+  //   The final_url in the response is ALWAYS http://107.174.37.180/s1_... — never rewritten.
+
   const primaryResult = await callVpsEndpoint(stage2ApiUrl);
   if (primaryResult.data && !primaryResult.data.error && primaryResult.data.stage1_url) {
     stage2ResponseData = primaryResult.data;
   } else {
-    vpsErrorDetail = primaryResult.error;
+    vpsErrorDetail = primaryResult.error || '';
 
-    // Detect Cloudflare Error 1003 (Direct IP access not allowed) or raw IP connection failures
-    const isError1003 = vpsErrorDetail.includes('1003') || vpsErrorDetail.includes('Direct IP');
-    const isDirectIp = /https?:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(stage2ApiUrl);
+    // Detect runtime-level direct-IP blocking (Cloudflare Error 1003 / Vercel Edge)
+    const isDirectIpBlocked =
+      vpsErrorDetail.includes('1003') ||
+      vpsErrorDetail.includes('Direct IP') ||
+      vpsErrorDetail.includes('direct IP');
 
-    // If direct IP was blocked by Cloudflare Edge with Error 1003, fallback to secure HTTPS gateway
-    if (isError1003 || (isDirectIp && !stage2ResponseData)) {
-      const fallbackGatewayUrl = 'https://boss-url.vercel.app/api/proxy/stage2';
-      if (stage2ApiUrl !== fallbackGatewayUrl) {
-        console.warn(`Cloudflare Direct IP restricted (${vpsErrorDetail}). Falling back to HTTPS gateway: ${fallbackGatewayUrl}`);
-        const fallbackResult = await callVpsEndpoint(fallbackGatewayUrl);
-        if (fallbackResult.data && !fallbackResult.data.error && fallbackResult.data.stage1_url) {
-          stage2ResponseData = fallbackResult.data;
-          vpsErrorDetail = '';
-        } else if (fallbackResult.error) {
-          vpsErrorDetail += ` | Gateway fallback error: ${fallbackResult.error}`;
-        }
+    // Use gateway if: IP was blocked AND a gateway URL is configured AND primary != gateway
+    const gateway = proxyGatewayUrl || '';
+    const shouldUseGateway = isDirectIpBlocked && gateway && stage2ApiUrl !== gateway;
+
+    if (shouldUseGateway) {
+      console.warn(
+        `[shortener] Direct IP blocked (${vpsErrorDetail.substring(0, 120)}). ` +
+        `Retrying via HTTPS gateway: ${gateway}`
+      );
+      const fallbackResult = await callVpsEndpoint(gateway);
+      if (fallbackResult.data && !fallbackResult.data.error && fallbackResult.data.stage1_url) {
+        stage2ResponseData = fallbackResult.data;
+        vpsErrorDetail = '';
+      } else {
+        vpsErrorDetail +=
+          ` | Gateway fallback also failed: ${fallbackResult.error || 'unknown error'}`;
       }
     }
   }

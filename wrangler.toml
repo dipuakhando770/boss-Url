@@ -22,6 +22,10 @@ migrations_dir = "migrations"
 [vars]
 APP_NAME = "Boss URL Shortener SaaS"
 STAGE1_DOMAIN = "https://urlshort.nasirdigitalhub.com"
+# Cloudflare Worker CANNOT reach http://107.174.37.180 directly (CF Error 1003).
+# STAGE2_API_URL points at the Vercel Node.js proxy which CAN reach the VPS.
 STAGE2_API_URL = "https://boss-url.vercel.app/api/proxy/stage2"
+# PROXY_GATEWAY_URL is the same Vercel Node.js endpoint used as fallback in shortener.ts.
+PROXY_GATEWAY_URL = "https://boss-url.vercel.app/api/proxy/stage2"
 ADMIN_PATH = "/nachid/admin"
 ENVIRONMENT = "production"

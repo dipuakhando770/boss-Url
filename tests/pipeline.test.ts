@@ -160,6 +160,7 @@ describe('Two-Stage URL Shortening Pipeline Service', () => {
       getLinkByStage1Code: vi.fn().mockResolvedValue(null),
       createStage1Link: vi.fn().mockResolvedValue(undefined),
       updateStage2Completed: vi.fn().mockResolvedValue(undefined),
+      updateStage2Failed: vi.fn().mockResolvedValue(undefined),
       incrementSubscriptionUsage: vi.fn().mockResolvedValue(undefined),
       getLinkById: vi.fn().mockResolvedValue({
         id: 'lnk_recovered_123',
@@ -200,6 +201,7 @@ describe('Two-Stage URL Shortening Pipeline Service', () => {
       user: dummyUser,
       stage1Domain: 'https://urlshort.nasirdigitalhub.com',
       stage2ApiUrl: 'http://107.174.37.180/api/links/stage1', // raw IP triggering 1003
+      proxyGatewayUrl: 'https://boss-url.vercel.app/api/proxy/stage2', // HTTPS gateway fallback
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);

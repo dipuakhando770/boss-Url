@@ -6,6 +6,13 @@ export interface Env {
   APP_NAME?: string;
   STAGE1_DOMAIN?: string;
   STAGE2_API_URL?: string;
+  /**
+   * PROXY_GATEWAY_URL — Optional HTTPS gateway used when the primary runtime
+   * (Cloudflare Workers / Vercel Edge) cannot reach the VPS IP directly.
+   * Set this to https://boss-url.vercel.app/api/proxy/stage2
+   * The Vercel Node.js function at that URL can reach http://107.174.37.180 directly.
+   */
+  PROXY_GATEWAY_URL?: string;
   ADMIN_PATH?: string;
   ENVIRONMENT?: string;
   JWT_SECRET?: string;

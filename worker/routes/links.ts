@@ -70,6 +70,7 @@ export async function handleLinkRoutes(request: Request, url: URL, db: Database,
         user: auth.user,
         stage1Domain,
         stage2ApiUrl,
+        proxyGatewayUrl: env.PROXY_GATEWAY_URL,
       });
 
       if (!result.success) {
