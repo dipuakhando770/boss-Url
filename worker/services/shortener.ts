@@ -188,10 +188,16 @@ export async function processTwoStageShortening(
       clearTimeout(timeout);
 
       if (!res.ok) {
-        const errText = await res.text();
+        const errText = typeof res.text === 'function' ? await res.text() : '';
         return { data: null, error: `VPS API HTTP ${res.status}: ${errText.substring(0, 200)}` };
       }
-      const data = await res.json<Stage2ApiResponse>();
+      let data: Stage2ApiResponse;
+      try {
+        data = await res.json<Stage2ApiResponse>();
+      } catch {
+        const raw = typeof res.text === 'function' ? await res.text() : '';
+        return { data: null, error: `VPS API returned non-JSON response: ${raw.substring(0, 200)}` };
+      }
       return { data, error: '' };
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -208,11 +214,17 @@ export async function processTwoStageShortening(
   //   The gateway forwards to the VPS and returns the exact VPS response unchanged.
   //   The final_url in the response is ALWAYS http://107.174.37.180/s1_... — never rewritten.
 
+  const getShortUrlFromVps = (data: Stage2ApiResponse | null): string => {
+    if (!data) return '';
+    return data.stage1_url || (data as any).final_url || (data as any).short_url || '';
+  };
+
   const primaryResult = await callVpsEndpoint(stage2ApiUrl);
-  if (primaryResult.data && !primaryResult.data.error && primaryResult.data.stage1_url) {
+  const primaryShortUrl = getShortUrlFromVps(primaryResult.data);
+  if (primaryResult.data && !primaryResult.data.error && primaryShortUrl) {
     stage2ResponseData = primaryResult.data;
   } else {
-    vpsErrorDetail = primaryResult.error || '';
+    vpsErrorDetail = primaryResult.error || (primaryResult.data?.message ? `VPS error: ${primaryResult.data.message}` : '');
 
     // Detect runtime-level direct-IP blocking (Cloudflare Error 1003 / Vercel Edge)
     const isDirectIpBlocked =
@@ -230,7 +242,8 @@ export async function processTwoStageShortening(
         `Retrying via HTTPS gateway: ${gateway}`
       );
       const fallbackResult = await callVpsEndpoint(gateway);
-      if (fallbackResult.data && !fallbackResult.data.error && fallbackResult.data.stage1_url) {
+      const fallbackShortUrl = getShortUrlFromVps(fallbackResult.data);
+      if (fallbackResult.data && !fallbackResult.data.error && fallbackShortUrl) {
         stage2ResponseData = fallbackResult.data;
         vpsErrorDetail = '';
       } else {
@@ -241,7 +254,8 @@ export async function processTwoStageShortening(
   }
 
   // 8. Validate Stage 2 VPS Response
-  if (!stage2ResponseData || stage2ResponseData.error || !stage2ResponseData.stage1_url) {
+  const finalShortUrl = getShortUrlFromVps(stage2ResponseData);
+  if (!stage2ResponseData || stage2ResponseData.error || !finalShortUrl) {
     const finalErr = vpsErrorDetail || stage2ResponseData?.message || 'VPS failed to produce a valid Stage 2 URL';
     // Strict requirement: Update record to 'failed', do NOT fabricate success
     await db.updateStage2Failed(linkId, finalErr);
@@ -255,9 +269,8 @@ export async function processTwoStageShortening(
   }
 
   // 9. Stage 2 Succeeded: Final URL extracted from VPS response (e.g. "http://107.174.37.180/s1_neCUtd")
-  const finalShortUrl = stage2ResponseData.stage1_url;
-  const stage2Code = stage2ResponseData.stage1_code || '';
-  const stage2Id = stage2ResponseData.stage1_id || null;
+  const stage2Code = stage2ResponseData.stage1_code || (stage2ResponseData as any).short_code || '';
+  const stage2Id = stage2ResponseData.stage1_id || (stage2ResponseData as any).id || null;
 
   await db.updateStage2Completed(linkId, stage2Code, stage2Id || 0, finalShortUrl);
   // Increment user subscription quota usage

@@ -2,6 +2,10 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/api/proxy/stage2",
+      "destination": "/api/proxy/stage2"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api"
     },

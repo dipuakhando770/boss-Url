@@ -161,11 +161,29 @@ async function routeRequest(webRequest: Request): Promise<Response> {
     );
   }
 
-  // 5. /api/proxy/stage2  — HTTPS gateway so the Cloudflare Worker can reach the VPS.
-  //    The Cloudflare Worker (which cannot fetch raw IPs) POSTs to this endpoint.
-  //    This Node.js function then forwards to http://107.174.37.180/api/links/stage1.
-  //    The final VPS URL in the response (http://107.174.37.180/s1_...) is returned as-is.
-  if (path === '/api/proxy/stage2' && webRequest.method === 'POST') {
+  // 5. /api/proxy/stage2  — Optional HTTPS gateway so runtimes that restrict raw IPs can reach the VPS.
+  //    Target: POST http://107.174.37.180/api/links/stage1
+  if (path === '/api/proxy/stage2') {
+    if (webRequest.method === 'GET') {
+      return new Response(
+        JSON.stringify({
+          status: 'UP',
+          endpoint: '/api/proxy/stage2',
+          target: 'http://107.174.37.180/api/links/stage1',
+          method: 'POST',
+          description: 'Gateway to existing VPS backend Stage 2 API',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (webRequest.method !== 'POST') {
+      return new Response(JSON.stringify({ error: 'Method not allowed. Use POST.' }), {
+        status: 405,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     let payload: string;
     try {
       payload = await webRequest.text();
