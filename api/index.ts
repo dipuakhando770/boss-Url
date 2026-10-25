@@ -6,7 +6,7 @@ import { handleAdminRoutes } from '../worker/routes/admin';
 import { Env } from '../worker/types';
 
 export const config = {
-  runtime: 'edge',
+  runtime: 'nodejs',
 };
 
 function handleCors(request: Request): Headers {
