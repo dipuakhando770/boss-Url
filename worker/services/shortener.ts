@@ -9,7 +9,13 @@ export interface ShortenOptions {
   title?: string;
   user: UserRecord;
   stage1Domain: string;
-  stage2ApiUrl: string;
+  stage2ApiUrl?: string;
+  /**
+   * Base URL of the VPS backend. When provided (and stage2ApiUrl is absent),
+   * the Stage 2 endpoint is constructed as `${bossVpsApiBaseUrl}/api/links/stage1`
+   * with trailing slashes normalized to avoid accidental duplication.
+   */
+  bossVpsApiBaseUrl?: string;
   /**
    * Optional HTTPS proxy gateway for runtimes that block raw-IP HTTP requests
    * (Cloudflare Workers, Vercel Edge). When provided and the primary stage2ApiUrl
@@ -35,7 +41,7 @@ export async function processTwoStageShortening(
   db: Database,
   options: ShortenOptions
 ): Promise<ShortenResult> {
-  const { originalUrl, customCode, title, user, stage1Domain, stage2ApiUrl, proxyGatewayUrl } = options;
+  const { originalUrl, customCode, title, user, stage1Domain, stage2ApiUrl, bossVpsApiBaseUrl, proxyGatewayUrl } = options;
 
   // 1. Validate destination URL and extract hostname
   let hostname: string;
@@ -219,9 +225,26 @@ export async function processTwoStageShortening(
     return data.stage1_url || (data as any).final_url || (data as any).short_url || '';
   };
 
-  const primaryResult = await callVpsEndpoint(stage2ApiUrl);
+  // Resolve the Stage 2 endpoint.
+  // Prefer an explicitly configured full URL (e.g. an HTTPS proxy gateway that can
+  // reach the VPS). Otherwise build it from BOSS_VPS_API_BASE_URL + verified path,
+  // normalizing trailing slashes to avoid accidental duplication. Fall back to the
+  // known VPS endpoint when neither is provided.
+  const buildVpsEndpointFromBase = (base: string): string => {
+    const trimmed = (base || '').trim().replace(/\/+$/, '');
+    if (!trimmed) return 'http://107.174.37.180/api/links/stage1';
+    return `${trimmed}/api/links/stage1`;
+  };
+
+  const primaryEndpoint =
+    (stage2ApiUrl && stage2ApiUrl.trim()) ||
+    (bossVpsApiBaseUrl && bossVpsApiBaseUrl.trim()
+      ? buildVpsEndpointFromBase(bossVpsApiBaseUrl)
+      : 'http://107.174.37.180/api/links/stage1');
+
+  const primaryResult = await callVpsEndpoint(primaryEndpoint);
   const primaryShortUrl = getShortUrlFromVps(primaryResult.data);
-  if (primaryResult.data && !primaryResult.data.error && primaryShortUrl) {
+  if (primaryResult.data && !primaryResult.data.error && primaryResult.data.success !== false && primaryShortUrl) {
     stage2ResponseData = primaryResult.data;
   } else {
     vpsErrorDetail = primaryResult.error || (primaryResult.data?.message ? `VPS error: ${primaryResult.data.message}` : '');
@@ -234,7 +257,7 @@ export async function processTwoStageShortening(
 
     // Use gateway if: IP was blocked AND a gateway URL is configured AND primary != gateway
     const gateway = proxyGatewayUrl || '';
-    const shouldUseGateway = isDirectIpBlocked && gateway && stage2ApiUrl !== gateway;
+    const shouldUseGateway = isDirectIpBlocked && gateway && primaryEndpoint !== gateway;
 
     if (shouldUseGateway) {
       console.warn(
@@ -243,7 +266,7 @@ export async function processTwoStageShortening(
       );
       const fallbackResult = await callVpsEndpoint(gateway);
       const fallbackShortUrl = getShortUrlFromVps(fallbackResult.data);
-      if (fallbackResult.data && !fallbackResult.data.error && fallbackShortUrl) {
+      if (fallbackResult.data && !fallbackResult.data.error && fallbackResult.data.success !== false && fallbackShortUrl) {
         stage2ResponseData = fallbackResult.data;
         vpsErrorDetail = '';
       } else {
@@ -255,7 +278,7 @@ export async function processTwoStageShortening(
 
   // 8. Validate Stage 2 VPS Response
   const finalShortUrl = getShortUrlFromVps(stage2ResponseData);
-  if (!stage2ResponseData || stage2ResponseData.error || !finalShortUrl) {
+  if (!stage2ResponseData || stage2ResponseData.error || stage2ResponseData.success === false || !finalShortUrl) {
     const finalErr = vpsErrorDetail || stage2ResponseData?.message || 'VPS failed to produce a valid Stage 2 URL';
     // Strict requirement: Update record to 'failed', do NOT fabricate success
     await db.updateStage2Failed(linkId, finalErr);

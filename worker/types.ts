@@ -7,6 +7,12 @@ export interface Env {
   STAGE1_DOMAIN?: string;
   STAGE2_API_URL?: string;
   /**
+   * Base URL of the existing VPS backend. The verified Stage 2 endpoint is
+   * `${BOSS_VPS_API_BASE_URL}/api/links/stage1` (trailing slash normalized).
+   */
+  BOSS_VPS_API_BASE_URL?: string;
+  NODE_ENV?: string;
+  /**
    * PROXY_GATEWAY_URL — Optional HTTPS gateway used when the primary runtime
    * (Cloudflare Workers / Vercel Edge) cannot reach the VPS IP directly.
    * Set this to https://boss-url.vercel.app/api/proxy/stage2

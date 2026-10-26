@@ -62,6 +62,7 @@ export async function handleLinkRoutes(request: Request, url: URL, db: Database,
 
       const stage1Domain = env.STAGE1_DOMAIN || 'https://urlshort.nasirdigitalhub.com';
       const stage2ApiUrl = env.STAGE2_API_URL || 'http://107.174.37.180/api/links/stage1';
+const bossVpsApiBaseUrl = env.BOSS_VPS_API_BASE_URL || 'http://107.174.37.180';
 
       const result = await processTwoStageShortening(db, {
         originalUrl: destinationUrl,
@@ -70,6 +71,7 @@ export async function handleLinkRoutes(request: Request, url: URL, db: Database,
         user: auth.user,
         stage1Domain,
         stage2ApiUrl,
+        bossVpsApiBaseUrl,
         proxyGatewayUrl: env.PROXY_GATEWAY_URL,
       });
 

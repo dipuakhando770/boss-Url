@@ -4,7 +4,7 @@ compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
 [build]
-command = "npm run build:frontend"
+command = "npm run build"
 
 # Cloudflare Workers Assets (serves the React SPA)
 [assets]
@@ -22,10 +22,14 @@ migrations_dir = "migrations"
 [vars]
 APP_NAME = "Boss URL Shortener SaaS"
 STAGE1_DOMAIN = "https://urlshort.nasirdigitalhub.com"
+# VPS base URL used to construct the verified Stage 2 endpoint:
+# POST {BOSS_VPS_API_BASE_URL}/api/links/stage1
+BOSS_VPS_API_BASE_URL = "http://107.174.37.180"
 # Cloudflare Workers CANNOT reach raw IP addresses (CF Error 1003).
 # STAGE2_API_URL points to the Vercel Node.js proxy which CAN reach the VPS over HTTP.
-# The proxy forwards the exact request and response — final_url remains http://107.174.37.180/s1_CODE.
 STAGE2_API_URL = "https://boss-url.vercel.app/api/proxy/stage2"
+PROXY_GATEWAY_URL = "https://boss-url.vercel.app/api/proxy/stage2"
 ADMIN_PATH = "/nachid/admin"
 ENVIRONMENT = "production"
+NODE_ENV = "production"
 
