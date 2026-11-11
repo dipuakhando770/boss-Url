@@ -1,4 +1,3 @@
-
 import { Database } from '../db';
 import { generateRandomString, hashIp } from '../services/crypto';
 import { ClickRecord } from '../types';
@@ -17,6 +16,8 @@ function escapeHtml(value: string): string {
 }
 
 function renderHtml(title: string, body: string, status = 200): Response {
+  // Use string arrays instead of template literals to avoid unterminated
+  // template-literal parsing errors in copied/edited source files.
   const html = [
     '<!doctype html>',
     '<html lang="en">',
@@ -65,11 +66,7 @@ function renderHtml(title: string, body: string, status = 200): Response {
   });
 }
 
-function renderError(
-  heading: string,
-  message: string,
-  status: number
-): Response {
+function renderError(heading: string, message: string, status: number): Response {
   const body =
     '<div class="status-icon" aria-hidden="true">!</div>' +
     '<h1>' + escapeHtml(heading) + '</h1>' +
@@ -80,225 +77,20 @@ function renderError(
 }
 
 /**
- * YouTube Custom URI Redirect
- * Destination is fetched from database and encoded once in q.
+ * Creates the vnd.youtube custom-scheme URL.
+ * The destination comes from the database and is encoded once as q.
+ *
+ * The supplied redir_token may expire or be rejected by YouTube.
  */
 function createYouTubeRedirectUrl(destination: URL): string {
   const params = new URLSearchParams();
 
   params.set('event', 'comments');
-
   params.set(
     'redir_token',
     'QUlxb01IWV9meHRYVXo0akE0T1M5QzVNaS1XWXxBQnJ0NjltbHFBRmFqbXZXRDcxVEZsSmhILThkQWJWYlBmX25seWI1NXRzZEw5MVNxUkM3TUREeGcyZWdDakRIYTZuUkZKOXdJSjFBU1JJZ2pILW5vSGlIVmIycUc0OWthcmNJ'
   );
-
   params.set('q', destination.toString());
   params.set('html_redirect', '1');
 
   return 'vnd.youtube://youtube.com/redirect?' + params.toString();
-}
-
-export async function handleRedirectRoute(
-  request: Request,
-  code: string,
-  db: Database
-): Promise<Response> {
-
-  // 1. Validate short code
-  const shortCode = code.trim();
-
-  if (!shortCode) {
-    return renderError(
-      'Invalid Short Link',
-      'The short link code is missing or invalid.',
-      400
-    );
-  }
-
-  // 2. Database lookup
-  let link: Awaited<ReturnType<Database['getLinkByStage1Code']>>;
-
-  try {
-    link = await db.getLinkByStage1Code(shortCode);
-  } catch (error) {
-    console.error('Redirect database lookup failed:', error);
-
-    return renderError(
-      'Service Temporarily Unavailable',
-      'We could not look up this short link right now. Please try again shortly.',
-      503
-    );
-  }
-
-  // 3. Link not found
-  if (!link) {
-    return renderError(
-      '404 - Link Not Found',
-      'This short link does not exist, has expired, or is no longer available.',
-      404
-    );
-  }
-
-  // 4. Disabled link
-  if (link.status === 'disabled') {
-    return renderError(
-      'Link Suspended',
-      'This link has been suspended. Please contact the site administrator.',
-      403
-    );
-  }
-
-  // 5. Validate original URL
-  let destinationUrl: URL;
-
-  try {
-    destinationUrl = new URL(link.original_url);
-
-    if (
-      destinationUrl.protocol !== 'https:' &&
-      destinationUrl.protocol !== 'http:'
-    ) {
-      throw new Error('Invalid destination protocol');
-    }
-
-    if (destinationUrl.username || destinationUrl.password) {
-      throw new Error('URL credentials are not allowed');
-    }
-  } catch {
-    return renderError(
-      'Invalid Destination',
-      'The destination URL saved for this short link is invalid.',
-      400
-    );
-  }
-
-  // 6. Cloudflare analytics
-  const cloudflare = (request as Request & {
-    cf?: {
-      country?: string;
-      city?: string;
-    };
-  }).cf;
-
-  const country =
-    cloudflare?.country ||
-    request.headers.get('cf-ipcountry') ||
-    'Unknown';
-
-  const city = cloudflare?.city || null;
-
-  const rawIp =
-    request.headers.get('cf-connecting-ip') || 'unknown';
-
-  const userAgent =
-    request.headers.get('user-agent') || '';
-
-  const referrer = (
-    request.headers.get('referer') ||
-    request.headers.get('referrer') ||
-    'Direct'
-  ).slice(0, 1000);
-
-  // 7. Device detection
-  let deviceType = 'Desktop';
-
-  if (/ipad|tablet|playbook|silk/i.test(userAgent)) {
-    deviceType = 'Tablet';
-  } else if (/mobile|iphone|ipod|android/i.test(userAgent)) {
-    deviceType = 'Mobile';
-  }
-
-  // 8. Browser detection
-  let browser = 'Other';
-
-  if (/edg/i.test(userAgent)) {
-    browser = 'Edge';
-  } else if (/opr|opera/i.test(userAgent)) {
-    browser = 'Opera';
-  } else if (/firefox|fxios/i.test(userAgent)) {
-    browser = 'Firefox';
-  } else if (/chrome|crios/i.test(userAgent)) {
-    browser = 'Chrome';
-  } else if (/safari/i.test(userAgent)) {
-    browser = 'Safari';
-  }
-
-  // 9. Save click analytics
-  try {
-    let ipHash = 'unknown';
-
-    try {
-      ipHash = await hashIp(rawIp);
-    } catch (error) {
-      console.error('IP hashing failed:', error);
-    }
-
-    const clickRecord: ClickRecord = {
-      id: 'clk_' + generateRandomString(12),
-      link_id: link.id,
-      ip_hash: ipHash,
-      country: country,
-      city: city,
-      referrer: referrer,
-      user_agent: userAgent.slice(0, 255),
-      device_type: deviceType,
-      browser: browser,
-      created_at: Date.now(),
-    };
-
-    const analyticsResults = await Promise.allSettled([
-      db.recordClick(clickRecord),
-      db.incrementLinkClicks(link.id),
-    ]);
-
-    for (const result of analyticsResults) {
-      if (result.status === 'rejected') {
-        console.error(
-          'Click analytics operation failed:',
-          result.reason
-        );
-      }
-    }
-
-  } catch (error) {
-    console.error('Failed to prepare click analytics:', error);
-  }
-
-  // 10. Generate YouTube redirect URI
-  const youtubeUrl =
-    createYouTubeRedirectUrl(destinationUrl);
-
-  const safeYouTubeUrl =
-    escapeHtml(youtubeUrl);
-
-  const safeBrowserUrl =
-    escapeHtml(destinationUrl.toString());
-
-  // 11. Intermediate redirect page
-  // No countdown and no automatic redirect.
-  const pageBody =
-    '<div class="status-icon" aria-hidden="true">✓</div>' +
-    '<h1>Great!</h1>' +
-    '<p class="description">' +
-    'Thanks for visiting.<br>' +
-    'You are just one step away from your destination.' +
-    '</p>' +
-    '<div class="actions">' +
-    '<a class="button" href="' +
-    safeYouTubeUrl +
-    '" rel="nofollow noopener noreferrer">Continue</a>' +
-    '<a class="button button-secondary" href="' +
-    safeBrowserUrl +
-    '" rel="nofollow noopener noreferrer">Open in Browser</a>' +
-    '</div>' +
-    '<p class="note">' +
-    'If the YouTube app does not open, use "Open in Browser".' +
-    '</p>';
-
-  return renderHtml(
-    'Continue',
-    pageBody,
-    200
-  );
-}
