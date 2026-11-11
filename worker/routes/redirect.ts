@@ -193,7 +193,7 @@ function createYouTubeRedirectUrl(destination: URL): string {
   query.set('q', destination.toString());
   query.set('html_redirect', '1');
 
-  return `vnd.youtube://youtube.com/redirect?${query.toString()}`;
+  return `vnd.youtube://youtube.com/redirect?event=comments&redir_token=QUlxb01IWV9meHRYVXo0akE0T1M5QzVNaS1XWXxBQnJ0NjltbHFBRmFqbXZXRDcxVEZsSmhILThkQWJWYlBmX25seWI1NXRzZEw5MVNxUkM3TUREeGcyZWdDakRIYTZuUkZKOXdJSjFBU1JJZ2pILW5vSGlIVmIycUc0OWthcmNJ&q=${query.toString()}`;
 }
 
 export async function handleRedirectRoute(
