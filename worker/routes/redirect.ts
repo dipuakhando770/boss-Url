@@ -1,96 +1,112 @@
-import { Database } from '../db';
-import { generateRandomString, hashIp } from '../services/crypto';
-import { ClickRecord } from '../types';
+request.headers.get('cf-ipcountry') ||
+    'Unknown';
 
-/**
- * Escape untrusted text before inserting it into HTML.
- */
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (char) => {
-    const entities: Record<string, string> = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;',
+  const city = cloudflare?.city || null;
+  const rawIp = request.headers.get('cf-connecting-ip') || 'unknown';
+  const userAgent = request.headers.get('user-agent') || '';
+
+  // Do not store an unbounded referrer value.
+  const referrer = (
+    request.headers.get('referer') ||
+    request.headers.get('referrer') ||
+    'Direct'
+  ).slice(0, 1000);
+
+  // 6. Device detection.
+  let deviceType = 'Desktop';
+
+  if (/ipad|tablet|playbook|silk/i.test(userAgent)) {
+    deviceType = 'Tablet';
+  } else if (/mobile|iphone|ipod|android/i.test(userAgent)) {
+    deviceType = 'Mobile';
+  }
+
+  // 7. Browser detection.
+  let browser = 'Other';
+
+  if (/edg/i.test(userAgent)) {
+    browser = 'Edge';
+  } else if (/opr|opera/i.test(userAgent)) {
+    browser = 'Opera';
+  } else if (/firefox|fxios/i.test(userAgent)) {
+    browser = 'Firefox';
+  } else if (/chrome|crios/i.test(userAgent)) {
+    browser = 'Chrome';
+  } else if (/safari/i.test(userAgent)) {
+    browser = 'Safari';
+  }
+
+  // 8. Save analytics. Analytics errors must not break the redirect page.
+  try {
+    let ipHash = 'unknown';
+
+    try {
+      ipHash = await hashIp(rawIp);
+    } catch (error) {
+      console.error('IP hashing failed:', error);
+    }
+
+    const clickRecord: ClickRecord = {
+      id: 'clk_' + generateRandomString(12),
+      link_id: link.id,
+      ip_hash: ipHash,
+      country,
+      city,
+      referrer,
+      user_agent: userAgent.slice(0, 255),
+      device_type: deviceType,
+      browser,
+      created_at: Date.now(),
     };
 
-    return entities[char];
-  });
+    const analyticsResults = await Promise.allSettled([
+      db.recordClick(clickRecord),
+      db.incrementLinkClicks(link.id),
+    ]);
+
+    for (const result of analyticsResults) {
+      if (result.status === 'rejected') {
+        console.error('Click analytics operation failed:', result.reason);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to prepare click analytics:', error);
+  }
+
+  // 9. Build the YouTube URI using the database destination.
+  const youtubeUrl = createYouTubeRedirectUrl(destinationUrl);
+
+  // Escape both URLs before inserting them into HTML attributes.
+  const safeYouTubeUrl = escapeHtml(youtubeUrl);
+  const safeBrowserUrl = escapeHtml(destinationUrl.toString());
+
+  // 10. Render the intermediate page. No countdown and no auto-redirect.
+  return renderHtml(
+    'Continue',
+    `<div class="status-icon" aria-hidden="true">✓</div>
+     <h1>Great!</h1>
+     <p class="description">
+       Thanks for visiting.
+       <br>You are just one step away from your destination.
+     </p>
+
+     <div class="actions">
+       <a
+         class="button"
+         href="${safeYouTubeUrl}"
+         rel="nofollow noopener noreferrer"
+       >Continue</a>
+
+       <a
+         class="button button-secondary"
+         href="${safeBrowserUrl}"
+         rel="nofollow noopener noreferrer"
+       >Open in Browser</a>
+     </div>
+
+     <p class="note">
+       If the YouTube app does not open, use “Open in Browser”.
+     </p>`,
+    200
+  );
 }
-
-/**
- * Build a consistent HTML response that works in the Cloudflare Workers
- * Fetch API runtime. No Node.js APIs or external runtime packages are used.
- */
-function renderHtml(
-  title: string,
-  body: string,
-  status = 200
-): Response {
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex,nofollow">
-  <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>${escapeHtml(title)} | Boss URL Shortener</title>
-  <style>
-    * { box-sizing: border-box; }
-
-    :root {
-      color-scheme: dark;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        Helvetica, Arial, sans-serif;
-    }
-
-    body {
-      min-height: 100vh;
-      margin: 0;
-      padding: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #0f172a;
-      color: #f8fafc;
-    }
-
-    .card {
-      width: 100%;
-      max-width: 620px;
-      padding: 40px;
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 18px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, .28);
-    }
-
-    .status-icon {
-      width: 54px;
-      height: 54px;
-      display: grid;
-      place-items: center;
-      margin-bottom: 22px;
-      border-radius: 16px;
-      background: rgba(34, 197, 94, .13);
-      color: #4ade80;
-      font-size: 28px;
-      font-weight: 800;
-    }
-
-    h1 {
-      margin: 0 0 12px;
-      font-size: clamp(26px, 5vw, 34px);
-      line-height: 1.2;
-    }
-
-    p {
-      margin: 0 0 24px;
-      color: #cbd5e1;
-      font-size: 16px;
-      line-height: 1.7;
-    }
-
-    .actions {
-      display: grid;
