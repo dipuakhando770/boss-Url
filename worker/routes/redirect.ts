@@ -2,123 +2,395 @@ import { Database } from '../db';
 import { generateRandomString, hashIp } from '../services/crypto';
 import { ClickRecord } from '../types';
 
-export async function handleRedirectRoute(request: Request, code: string, db: Database): Promise<Response> {
-  // Query link by stage1_code
-  const link = await db.getLinkByStage1Code(code);
-  if (!link) {
-    return new Response(
-      `<!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>404 - Link Not Found | Boss URL Shortener</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-          .card { text-align: center; max-width: 480px; padding: 2.5rem; background: #1e293b; border-radius: 1rem; border: 1px solid #334155; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }
-          h1 { color: #38bdf8; font-size: 2.5rem; margin-bottom: 0.5rem; }
-          p { color: #94a3b8; font-size: 1.1rem; line-height: 1.6; margin-bottom: 1.5rem; }
-          a { display: inline-block; background: #0284c7; color: white; padding: 0.75rem 1.5rem; border-radius: 0.5rem; text-decoration: none; font-weight: 600; }
-          a:hover { background: #0369a1; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h1>404</h1>
-          <h2>Link Not Found</h2>
-          <p>The short link you followed does not exist, has expired, or was disabled by its owner.</p>
-          <a href="/">Go to Boss URL Shortener</a>
-        </div>
-      </body>
-      </html>`,
-      {
-        status: 404,
-        headers: {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-        },
-      }
-    );
-  }
+/**
+ * Escape untrusted text before inserting it into HTML.
+ */
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    const entities: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    };
 
-  // Check if link is disabled
-  if (link.status === 'disabled') {
-    return new Response(
-      `<!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <title>Link Suspended</title>
-        <style>
-          body { font-family: sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-          .card { text-align: center; padding: 2rem; background: #1e293b; border-radius: 1rem; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h2>This link has been suspended</h2>
-          <p>Please contact the site administrator if you believe this is a mistake.</p>
-        </div>
-      </body>
-      </html>`,
-      {
-        status: 403,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
-      }
-    );
-  }
+    return entities[char];
+  });
+}
 
-  // Extract analytics from request headers
-  const cf = (request as unknown as { cf?: { country?: string; city?: string } }).cf || {};
-  const country = cf.country || request.headers.get('cf-ipcountry') || 'Unknown';
-  const city = cf.city || null;
-  const rawIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
-  const ipHash = await hashIp(rawIp);
-  const userAgent = request.headers.get('user-agent') || '';
-  const referrer = request.headers.get('referer') || request.headers.get('referrer') || 'Direct';
+/**
+ * Build a consistent HTML response that works in the Cloudflare Workers
+ * Fetch API runtime. No Node.js APIs or external runtime packages are used.
+ */
+function renderHtml(
+  title: string,
+  body: string,
+  status = 200
+): Response {
+  const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>${escapeHtml(title)} | Boss URL Shortener</title>
+  <style>
+    * { box-sizing: border-box; }
 
-  // Device detection
-  let deviceType = 'Desktop';
-  if (/mobile/i.test(userAgent)) deviceType = 'Mobile';
-  else if (/tablet|ipad/i.test(userAgent)) deviceType = 'Tablet';
+    :root {
+      color-scheme: dark;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Helvetica, Arial, sans-serif;
+    }
 
-  // Browser detection
-  let browser = 'Other';
-  if (/chrome|crios/i.test(userAgent) && !/edg/i.test(userAgent)) browser = 'Chrome';
-  else if (/safari/i.test(userAgent) && !/chrome/i.test(userAgent)) browser = 'Safari';
-  else if (/firefox|fxios/i.test(userAgent)) browser = 'Firefox';
-  else if (/edg/i.test(userAgent)) browser = 'Edge';
+    body {
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0f172a;
+      color: #f8fafc;
+    }
 
-  // Record click and increment counter asynchronously
-  const clickRecord: ClickRecord = {
-    id: 'clk_' + generateRandomString(12),
-    link_id: link.id,
-    ip_hash: ipHash,
-    country,
-    city,
-    referrer,
-    user_agent: userAgent.substring(0, 255),
-    device_type: deviceType,
-    browser,
-    created_at: Date.now(),
-  };
+    .card {
+      width: 100%;
+      max-width: 620px;
+      padding: 40px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 18px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, .28);
+    }
 
-  // Wait for click logging and counter increment
-  try {
-    await db.recordClick(clickRecord);
-    await db.incrementLinkClicks(link.id);
-  } catch (err) {
-    console.error('Failed to log click analytics:', err);
-  }
+    .status-icon {
+      width: 54px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 22px;
+      border-radius: 16px;
+      background: rgba(34, 197, 94, .13);
+      color: #4ade80;
+      font-size: 28px;
+      font-weight: 800;
+    }
 
-  // Return HTTP 302 redirect to original destination URL
-  return new Response(null, {
-    status: 302,
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(26px, 5vw, 34px);
+      line-height: 1.2;
+    }
+
+    p {
+      margin: 0 0 24px;
+      color: #cbd5e1;
+      font-size: 16px;
+      line-height: 1.7;
+    }
+
+    .actions {
+      display: grid;
+      gap: 12px;
+    }
+
+    .button {
+      display: flex;
+      min-height: 50px;
+      align-items: center;
+      justify-content: center;
+      padding: 14px 20px;
+      border: 0;
+      border-radius: 9px;
+      background: #16a34a;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background .2s ease, transform .2s ease;
+    }
+
+    .button:hover {
+      background: #15803d;
+      transform: translateY(-1px);
+    }
+
+    .button-secondary {
+      background: #334155;
+      color: #e2e8f0;
+    }
+
+    .button-secondary:hover {
+      background: #475569;
+    }
+
+    .note {
+      margin: 20px 0 0;
+      color: #94a3b8;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 480px) {
+      body { padding: 16px; }
+      .card { padding: 28px 22px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    ${body}
+  </main>
+</body>
+</html>`;
+
+  return new Response(html, {
+    status,
     headers: {
-      'Location': link.original_url,
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+      Pragma: 'no-cache',
+      Expires: '0',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin',
+      'X-Frame-Options': 'DENY',
     },
   });
+}
+
+function renderError(
+  heading: string,
+  message: string,
+  status: number
+): Response {
+  return renderHtml(
+    heading,
+    `<div class="status-icon" aria-hidden="true">!</div>
+     <h1>${escapeHtml(heading)}</h1>
+     <p>${escapeHtml(message)}</p>
+     <a class="button button-secondary" href="/">Go to Homepage</a>`,
+    status
+  );
+}
+
+/**
+ * Creates the YouTube custom-scheme redirect URL.
+ *
+ * The q parameter is always populated from the validated database URL.
+ * URLSearchParams safely encodes the destination as a query parameter.
+ *
+ * Note: this URI scheme is handled by the visitor's device/app. A Worker
+ * cannot guarantee that YouTube is installed or that the OS will open it.
+ */
+function createYouTubeRedirectUrl(destination: URL): string {
+  const query = new URLSearchParams();
+  query.set('event', 'video_description');
+  query.set('q', destination.toString());
+  query.set('html_redirect', '1');
+
+  return `vnd.youtube://youtube.com/redirect?${query.toString()}`;
+}
+
+export async function handleRedirectRoute(
+  request: Request,
+  code: string,
+  db: Database
+): Promise<Response> {
+  // Only allow a non-empty short code.
+  const shortCode = code.trim();
+
+  if (!shortCode) {
+    return renderError(
+      'Invalid Short Link',
+      'The short link code is missing or invalid.',
+      400
+    );
+  }
+
+  // 1. Fetch the link from the database using its short code.
+  let link: Awaited<ReturnType<Database['getLinkByStage1Code']>>;
+
+  try {
+    link = await db.getLinkByStage1Code(shortCode);
+  } catch (error) {
+    console.error('Redirect database lookup failed:', error);
+
+    return renderError(
+      'Service Temporarily Unavailable',
+      'We could not look up this short link right now. Please try again shortly.',
+      503
+    );
+  }
+
+  // 2. Link not found.
+  if (!link) {
+    return renderError(
+      '404 - Link Not Found',
+      'This short link does not exist, has expired, or is no longer available.',
+      404
+    );
+  }
+
+  // 3. Disabled link.
+  if (link.status === 'disabled') {
+    return renderError(
+      'Link Suspended',
+      'This link has been suspended. Please contact the site administrator if you believe this is a mistake.',
+      403
+    );
+  }
+
+  // 4. Validate the original URL from the database.
+  let destinationUrl: URL;
+
+  try {
+    destinationUrl = new URL(link.original_url);
+
+    if (
+      destinationUrl.protocol !== 'https:' &&
+      destinationUrl.protocol !== 'http:'
+    ) {
+      throw new Error('Only HTTP and HTTPS destinations are supported.');
+    }
+
+    // Reject URLs with embedded credentials.
+    if (destinationUrl.username || destinationUrl.password) {
+      throw new Error('Destination URL credentials are not allowed.');
+    }
+  } catch {
+    return renderError(
+      'Invalid Destination',
+      'The destination URL saved for this short link is invalid.',
+      400
+    );
+  }
+
+  // 5. Collect Cloudflare request analytics.
+  const cloudflare = (
+    request as Request & {
+      cf?: {
+        country?: string;
+        city?: string;
+      };
+    }
+  ).cf;
+
+  const country =
+    cloudflare?.country ||
+    request.headers.get('cf-ipcountry') ||
+    'Unknown';
+
+  const city = cloudflare?.city || null;
+  const rawIp = request.headers.get('cf-connecting-ip') || 'unknown';
+  const userAgent = request.headers.get('user-agent') || '';
+
+  // Do not store an unbounded referrer value.
+  const referrer = (
+    request.headers.get('referer') ||
+    request.headers.get('referrer') ||
+    'Direct'
+  ).slice(0, 1000);
+
+  // 6. Device detection.
+  let deviceType = 'Desktop';
+
+  if (/ipad|tablet|playbook|silk/i.test(userAgent)) {
+    deviceType = 'Tablet';
+  } else if (/mobile|iphone|ipod|android/i.test(userAgent)) {
+    deviceType = 'Mobile';
+  }
+
+  // 7. Browser detection.
+  let browser = 'Other';
+
+  if (/edg/i.test(userAgent)) {
+    browser = 'Edge';
+  } else if (/opr|opera/i.test(userAgent)) {
+    browser = 'Opera';
+  } else if (/firefox|fxios/i.test(userAgent)) {
+    browser = 'Firefox';
+  } else if (/chrome|crios/i.test(userAgent)) {
+    browser = 'Chrome';
+  } else if (/safari/i.test(userAgent)) {
+    browser = 'Safari';
+  }
+
+  // 8. Save analytics. Analytics errors must not break the redirect page.
+  try {
+    let ipHash = 'unknown';
+
+    try {
+      ipHash = await hashIp(rawIp);
+    } catch (error) {
+      console.error('IP hashing failed:', error);
+    }
+
+    const clickRecord: ClickRecord = {
+      id: 'clk_' + generateRandomString(12),
+      link_id: link.id,
+      ip_hash: ipHash,
+      country,
+      city,
+      referrer,
+      user_agent: userAgent.slice(0, 255),
+      device_type: deviceType,
+      browser,
+      created_at: Date.now(),
+    };
+
+    const analyticsResults = await Promise.allSettled([
+      db.recordClick(clickRecord),
+      db.incrementLinkClicks(link.id),
+    ]);
+
+    for (const result of analyticsResults) {
+      if (result.status === 'rejected') {
+        console.error('Click analytics operation failed:', result.reason);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to prepare click analytics:', error);
+  }
+
+  // 9. Build the YouTube URI using the database destination.
+  const youtubeUrl = createYouTubeRedirectUrl(destinationUrl);
+
+  // Escape both URLs before inserting them into HTML attributes.
+  const safeYouTubeUrl = escapeHtml(youtubeUrl);
+  const safeBrowserUrl = escapeHtml(destinationUrl.toString());
+
+  // 10. Render the intermediate page. No countdown and no auto-redirect.
+  return renderHtml(
+    'Continue',
+    `<div class="status-icon" aria-hidden="true">✓</div>
+     <h1>Great!</h1>
+     <p class="description">
+       Thanks for visiting.
+       <br>You are just one step away from your destination.
+     </p>
+
+     <div class="actions">
+       <a
+         class="button"
+         href="${safeYouTubeUrl}"
+         rel="nofollow noopener noreferrer"
+       >Continue</a>
+
+       <a
+         class="button button-secondary"
+         href="${safeBrowserUrl}"
+         rel="nofollow noopener noreferrer"
+       >Open in Browser</a>
+     </div>
+
+     <p class="note">
+       If the YouTube app does not open, use “Open in Browser”.
+     </p>`,
+    200
+  );
 }
